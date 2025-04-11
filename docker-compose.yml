@@ -1,0 +1,48 @@
+services:
+  wildfly_node1:
+    container_name: wildfly_node1
+    image: wildfly-k8s:1.0-SNAPSHOT
+#    ports:
+#      - 8081:8080
+    expose:
+      - "8080"  # Exposing WildFly's internal port (do not expose to host)
+    environment:
+      - WILDFLY_NODE=node1
+      - WILDFLY_PORT_BINDING=0
+      - WILDFLY_CLUSTER_PW=verysafeclusterpwd
+      - VIRTUAL_HOST=wildfly.local  # This is required for nginx-proxy to know the backend
+      - VIRTUAL_PORT=8080
+    networks:
+      wildfly_network:
+
+  wildfly_node2:
+    container_name: wildfly_node2
+    image: wildfly-k8s:1.0-SNAPSHOT
+#    ports:
+#      - 8082:8080
+    expose:
+      - "8080"  # Exposing WildFly's internal port (do not expose to host)
+    environment:
+      - WILDFLY_NODE=node2
+      - WILDFLY_PORT_BINDING=0
+      - WILDFLY_CLUSTER_PW=verysafeclusterpwd
+      - VIRTUAL_HOST=wildfly.local  # This is required for nginx-proxy to know the backend
+      - VIRTUAL_PORT=8080
+    networks:
+      wildfly_network:
+
+  nginx:
+    image: jwilder/nginx-proxy  # Nginx reverse proxy with automatic discovery
+    container_name: nginx-proxy
+    ports:
+      - "80:80"  # Expose Nginx on port 80
+    environment:
+      - DEFAULT_HOST=wildfly.local
+    networks:
+      - wildfly_network
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro  # Required for docker-gen to discover containers
+
+networks:
+  wildfly_network:
+    driver: bridge  # Use the bridge network driver to enable automatic container discovery

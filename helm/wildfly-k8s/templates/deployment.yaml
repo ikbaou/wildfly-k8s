@@ -1,0 +1,245 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wildfly-k8s.fullname" . }}
+  labels:
+    {{- include "wildfly-k8s.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "wildfly-k8s.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "wildfly-k8s.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "wildfly-k8s.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+#      initContainers:
+#        - name: wildfly-cli-init
+#          image: "{{ .Values.wildfly.image.repository }}:{{ .Values.wildfly.image.tag }}"
+#          command:
+#            - /bin/sh
+#            - -c
+#            - |
+#              # Add the user silently with the new password (assumes $ADMIN_PASSWORD is set via env or secret)
+#              /opt/jboss/wildfly/bin/add-user.sh admin "${ADMIN_PASSWORD}" --silent
+#
+#              # Start WildFly in admin-only mode in the background
+#              /opt/jboss/wildfly/bin/standalone.sh -c standalone-full-ha.xml --admin-only &
+#
+#              # Wait for the management interface to be up
+#              until curl -sS http://127.0.0.1:9990 > /dev/null; do
+#                echo "Waiting for WildFly to start in admin-only mode..."
+#                sleep 3
+#              done
+#
+#              echo "WildFly is up, running CLI scripts..."
+#
+#              # Run the CLI script
+#              /opt/jboss/wildfly/bin/jboss-cli.sh --connect --user=admin --password="${ADMIN_PASSWORD}" --file=/cli/wildfly.cli
+#
+#              # Ensure WildFly is running and then execute the required CLI commands
+#              if [ $? -eq 0 ]; then
+#                echo "WildFly CLI executed successfully"
+#                # If you need to shutdown WildFly
+#                /opt/jboss/wildfly/bin/jboss-cli.sh --connect --user=admin --password="${ADMIN_PASSWORD}" --command="shutdown"
+#                else
+#                echo "CLI execution failed"
+#              fi
+#
+#              echo "Starting WildFly"
+#              /opt/jboss/wildfly/bin/standalone.sh -c standalone-full-ha.xml -b 0.0.0.0
+#          env:
+#            - name: ADMIN_PASSWORD
+#              valueFrom:
+#                secretKeyRef:
+#                  name: wildfly.admin.secret
+#                  key: password
+#          volumeMounts:
+##            - name: config-volume
+##              mountPath: /opt/jboss/wildfly/standalone/configuration
+#            - name: cli-scripts
+#              mountPath: /cli
+
+
+
+
+      initContainers:
+        {{- range .Values.initContainers }}
+        - name: {{ .name }}
+          image: {{ .image }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              cp /scripts/{{ .scriptName }} /scripts-dir/
+              chmod +x /scripts-dir/{{ .scriptName }}
+              /scripts-dir/{{ .scriptName }}
+          env:
+            - name: REPO_URL
+              value: {{ .repoUrl }}
+            - name: NEXUS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .credentialsSecret }}
+                  key: username
+            - name: NEXUS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .credentialsSecret }}
+                  key: password
+            - name: TARGET_DIR
+              value: {{ .targetDir }}
+            - name: ARTIFACTS
+              value: "{{ join "," .artifacts }}"
+          volumeMounts:
+            - name: scripts-volume
+              mountPath: /scripts
+            - name: scripts-dir
+              mountPath: /scripts-dir
+            - name: jars-volume
+              mountPath: /mtn/artifacts/
+        {{- end }}
+
+
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.wildfly.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Add the user silently with the new password (assumes $ADMIN_PASSWORD is set via env or secret)
+              /opt/jboss/wildfly/bin/add-user.sh admin "${ADMIN_PASSWORD}" --silent
+
+              # Start WildFly in admin-only mode in the background
+              /opt/jboss/wildfly/bin/standalone.sh -c standalone-full-ha.xml --admin-only &
+
+              # Wait for the management interface to be up
+              until curl -sS http://127.0.0.1:9990 > /dev/null; do
+                echo "Waiting for WildFly to start in admin-only mode..."
+                sleep 3
+              done
+
+              echo "WildFly is up, running CLI scripts..."
+
+              # Run the CLI script
+              /opt/jboss/wildfly/bin/jboss-cli.sh --connect --user=admin --password="${ADMIN_PASSWORD}" --file=/cli/wildfly.cli
+
+              # Ensure WildFly is running and then execute the required CLI commands
+              if [ $? -eq 0 ]; then
+                echo "WildFly CLI executed successfully"
+                # If you need to shutdown WildFly
+                /opt/jboss/wildfly/bin/jboss-cli.sh --connect --user=admin --password="${ADMIN_PASSWORD}" --command="shutdown"
+                else
+                echo "CLI execution failed"
+              fi
+
+              echo "Starting WildFly with hostname: ${HOSTNAME} and ip: ${POD_IP}"
+              /opt/jboss/wildfly/bin/standalone.sh -c standalone-full-ha.xml \
+                -Djava.net.preferIPv4Stack=true -b ${POD_IP} -Djgroups.bind_addr=${HOSTNAME} \
+                -Djboss.messaging.cluster.password=makis
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/opt/jboss/wildfly/bin/jboss-cli.sh", "--connect", ":shutdown(timeout=30)"]
+          terminationGracePeriodSeconds: 60
+          env:
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wildfly.admin.secret
+                  key: password
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+              # valueFrom:
+              #   secretKeyRef:
+              #     name: wildfly-cluster-secret
+              #     key: password          
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - containerPort: 7600
+            - containerPort: 8888
+            - containerPort: 9990
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: cli-scripts
+              mountPath: /cli
+#            - name: config-volume
+#              mountPath: /opt/jboss/wildfly/standalone/configuration
+            - name: jars-volume
+              mountPath: /opt/jboss/wildfly/standalone/deployments
+              subPath: deployments
+          {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+#        - name: config-volume
+        - name: cli-scripts
+          configMap:
+            name: wildfly-cli
+        - name: scripts-volume
+          configMap:
+            name: init-scripts-configmap
+        - name: scripts-dir
+          emptyDir: {}
+        - name: jars-volume
+          emptyDir: {}
+      {{- with .Values.volumes }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

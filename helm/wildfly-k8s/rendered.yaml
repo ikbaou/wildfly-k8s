@@ -1,0 +1,453 @@
+---
+# Source: wildfly-k8s/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wildfly-k8s
+  labels:
+    helm.sh/chart: wildfly-k8s-0.1.0
+    app.kubernetes.io/name: wildfly-k8s
+    app.kubernetes.io/instance: wildfly
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: true
+---
+# Source: wildfly-k8s/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wildfly-cli
+data:
+  wildfly.cli: |
+    #carefull not to indent the following line
+    
+    #logging
+    /subsystem=logging/pattern-formatter=STDOUT-FORMATTER:add(pattern="%s%n")
+    /subsystem=logging/console-handler=STDOUT-HANDLER:add(named-formatter=STDOUT-FORMATTER, autoflush=true, target=System.out)
+    /subsystem=logging/logger=stdout:add(use-parent-handlers=false, handlers=[STDOUT-HANDLER])
+    /subsystem=logging/logger=org.hibernate.orm.deprecation:add
+    /subsystem=logging/logger=org.hibernate.orm.deprecation:write-attribute(name="level", value="ERROR")
+    #JSP
+    /system-property=org.apache.jasper.compiler.Parser.STRICT_WHITESPACE:add(value=false)
+    #kuberenetes
+    /subsystem=jgroups/stack=tcp/protocol=MPING:remove()
+    /subsystem=jgroups/stack=tcp/protocol=kubernetes.KUBE_PING:add(add-index=0,properties={namespace="default",labels="app.kubernetes.io/instance=wildfly"})
+    /subsystem=jgroups/channel=ee:write-attribute(name=stack,value=tcp)
+    /subsystem=jgroups/stack=udp:remove()
+    #JMS
+    jms-queue add --queue-address=ceproc_umeQueue --entries=java:/jms/queue/ceproc_umeQueue
+    jms-queue add --queue-address=ceproc_mailsQueue --entries=java:/jms/queue/ceproc_mailsQueue
+    jms-queue add --queue-address=ceproc_notificationsQueue --entries=java:/jms/queue/ceproc_notificationsQueue
+    jms-queue add --queue-address=ceproc_tenderOpeningQueue --entries=java:/jms/queue/ceproc_tenderOpeningQueue
+    jms-queue add --queue-address=ceproc_cfPublishRetractQueue --entries=java:/jms/queue/ceproc_cfPublishRetractQueue
+    jms-queue add --queue-address=ceproc_tenderDPSOpeningQueue --entries=java:/jms/queue/ceproc_tenderDPSOpeningQueue
+    jms-queue add --queue-address=ceproc_timestampsQueue --entries=java:/jms/queue/ceproc_timestampsQueue
+    jms-queue add --queue-address=ceproc_auditQueue --entries=java:/jms/queue/ceproc_auditQueue
+    jms-queue add --queue-address=ceproc_exportQueue --entries=java:/jms/queue/ceproc_exportQueue
+    jms-queue add --queue-address=ceproc_eSignatureQueue --entries=java:/jms/queue/ceproc_eSignatureQueue
+    jms-queue add --queue-address=ceproc_authorityImportQueue --entries=java:/jms/queue/ceproc_authorityImportQueue
+    jms-queue add --queue-address=ceproc_paymentQueue --entries=java:/jms/queue/ceproc_paymentQueue
+    jms-queue add --queue-address=ceproc_planCycleQueue --entries=java:/jms/queue/ceproc_planCycleQueue
+    jms-queue add --queue-address=ceproc_planSubmissionQueue --entries=java:/jms/queue/ceproc_planSubmissionQueue
+    jms-queue add --queue-address=ceproc_planPublicationQueue --entries=java:/jms/queue/ceproc_planPublicationQueue
+    jms-queue add --queue-address=ftsIndexingQueue --entries=java:/jms/queue/ftsIndexingQueue
+    jms-queue add --queue-address=ceproc_ocdsPublicationQueue --entries=java:/jms/queue/ceproc_ocdsPublicationQueue
+    jms-queue add --queue-address=bulkImportQueue --entries=java:/jms/queue/bulkImportQueue
+    jms-queue add --queue-address=ceproc_messageRecipientQueue --entries=java:/jms/queue/ceproc_messageRecipientQueue
+    jms-queue add --queue-address=associationQueue --entries=java:/jms/queue/associationQueue
+    jms-topic add --topic-address=ceproc_auditTopic --entries=java:/jms/topic/ceproc_auditTopic
+    jms-topic add --topic-address=ceproc_cacheTopic --entries=java:/jms/topic/ceproc_cacheTopic # end if JMS
+---
+# Source: wildfly-k8s/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: init-scripts-configmap
+data:
+  
+  fetch-jars.sh: |
+    #carefull not to indent the following line
+    #!/bin/bash
+    
+    set -e
+    
+    # Create the target directory
+    mkdir -p ${TARGET_DIR}
+    
+    # Fetch JARs using Maven dependency plugin
+    for artifact in "${ARTIFACTS[@]}"; do
+      # Split the artifact into parts
+      IFS=':' read -r groupId artifactId version extension <<< "${artifact}"
+    
+      # Replace '.' with '/' for the groupId to form the correct directory structure
+      groupDir=$(echo ${groupId} | sed 's/\./\//g')
+    
+      # Define the full path to the artifact
+      artifactPath="${HOME}/.m2/repository/${groupDir}/${artifactId}/${version}/${artifactId}-${version}.${extension}"
+    
+      # Run Maven dependency get
+      mvn dependency:get \
+        -Dartifact=${artifact} \
+        -DremoteRepositories=${REPO_URL} \
+        -Dusername=${NEXUS_USERNAME} \
+        -Dpassword=${NEXUS_PASSWORD} \
+        -Dmaven.resolver.transport=wagon \
+        -Dmaven.wagon.http.ssl.insecure=true \
+        -Dmaven.wagon.http.ssl.allowall=true
+    
+      # Copy the artifact to the target directory
+      echo "Copying ${artifactPath} to ${TARGET_DIR}"
+      cp "${artifactPath}" ${TARGET_DIR}
+      addgroup --system jboss
+      adduser --system --ingroup jboss jboss
+      echo "changing ownership to jboss:jboss (1000:1000) for: ${TARGET_DIR}"
+      chown -R 1000:1000 ${TARGET_DIR}
+      echo "listing contents of: ${TARGET_DIR}"
+      ls -la ${TARGET_DIR}
+    done
+---
+# Source: wildfly-k8s/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wildfly-k8s-jgroups-kubeping-binding
+  labels:
+    helm.sh/chart: wildfly-k8s-0.1.0
+    app.kubernetes.io/name: wildfly-k8s
+    app.kubernetes.io/instance: wildfly
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+subjects:
+  - kind: ServiceAccount
+    name: wildfly-k8s
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: jgroups-kubeping-pod-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: wildfly-k8s/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: wildfly-k8s
+  labels:
+    helm.sh/chart: wildfly-k8s-0.1.0
+    app.kubernetes.io/name: wildfly-k8s
+    app.kubernetes.io/instance: wildfly
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: 9990
+      targetPort: 9990
+      protocol: TCP
+      name: admin
+    - port: 7600
+      targetPort: 7600
+      protocol: TCP
+      name: jgroups
+  selector:
+    app.kubernetes.io/name: wildfly-k8s
+    app.kubernetes.io/instance: wildfly
+---
+# Source: wildfly-k8s/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wildfly-k8s
+  labels:
+    helm.sh/chart: wildfly-k8s-0.1.0
+    app.kubernetes.io/name: wildfly-k8s
+    app.kubernetes.io/instance: wildfly
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wildfly-k8s
+      app.kubernetes.io/instance: wildfly
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: wildfly-k8s-0.1.0
+        app.kubernetes.io/name: wildfly-k8s
+        app.kubernetes.io/instance: wildfly
+        app.kubernetes.io/version: "1.16.0"
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      imagePullSecrets:
+        - name: registry.local.credentials
+      serviceAccountName: wildfly-k8s
+
+#      initContainers:
+#        - name: wildfly-cli-init
+#          image: "quay.io/wildfly/wildfly:35.0.1.Final-jdk21"
+#          command:
+#            - /bin/sh
+#            - -c
+#            - |
+#              # Add the user silently with the new password (assumes $ADMIN_PASSWORD is set via env or secret)
+#              /opt/jboss/wildfly/bin/add-user.sh admin "${ADMIN_PASSWORD}" --silent
+#
+#              # Start WildFly in admin-only mode in the background
+#              /opt/jboss/wildfly/bin/standalone.sh -c standalone-full-ha.xml --admin-only &
+#
+#              # Wait for the management interface to be up
+#              until curl -sS http://127.0.0.1:9990 > /dev/null; do
+#                echo "Waiting for WildFly to start in admin-only mode..."
+#                sleep 3
+#              done
+#
+#              echo "WildFly is up, running CLI scripts..."
+#
+#              # Run the CLI script
+#              /opt/jboss/wildfly/bin/jboss-cli.sh --connect --user=admin --password="${ADMIN_PASSWORD}" --file=/cli/wildfly.cli
+#
+#              # Ensure WildFly is running and then execute the required CLI commands
+#              if [ $? -eq 0 ]; then
+#                echo "WildFly CLI executed successfully"
+#                # If you need to shutdown WildFly
+#                /opt/jboss/wildfly/bin/jboss-cli.sh --connect --user=admin --password="${ADMIN_PASSWORD}" --command="shutdown"
+#                else
+#                echo "CLI execution failed"
+#              fi
+#
+#              echo "Starting WildFly"
+#              /opt/jboss/wildfly/bin/standalone.sh -c standalone-full-ha.xml -b 0.0.0.0
+#          env:
+#            - name: ADMIN_PASSWORD
+#              valueFrom:
+#                secretKeyRef:
+#                  name: wildfly.admin.secret
+#                  key: password
+#          volumeMounts:
+##            - name: config-volume
+##              mountPath: /opt/jboss/wildfly/standalone/configuration
+#            - name: cli-scripts
+#              mountPath: /cli
+
+
+
+
+      initContainers:
+        - name: fetch-jars
+          image: maven:3.9-eclipse-temurin-17
+          command:
+            - /bin/bash
+            - -c
+            - |
+              cp /scripts/fetch-jars.sh /scripts-dir/
+              chmod +x /scripts-dir/fetch-jars.sh
+              /scripts-dir/fetch-jars.sh
+          env:
+            - name: REPO_URL
+              value: https://repo.local/repository/repo.maven.local/
+            - name: NEXUS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: registry.local.credentials
+                  key: username
+            - name: NEXUS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: registry.local.credentials
+                  key: password
+            - name: TARGET_DIR
+              value: /mtn/artifacts/deployments
+            - name: ARTIFACTS
+              value: "com.ibaou.experiments:wildfly-k8s:1.0-SNAPSHOT:war"
+          volumeMounts:
+            - name: scripts-volume
+              mountPath: /scripts
+            - name: scripts-dir
+              mountPath: /scripts-dir
+            - name: jars-volume
+              mountPath: /mtn/artifacts/
+
+
+      containers:
+        - name: wildfly-k8s
+          image: "quay.io/wildfly/wildfly:35.0.1.Final-jdk21"
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Add the user silently with the new password (assumes $ADMIN_PASSWORD is set via env or secret)
+              /opt/jboss/wildfly/bin/add-user.sh admin "${ADMIN_PASSWORD}" --silent
+
+              # Start WildFly in admin-only mode in the background
+              /opt/jboss/wildfly/bin/standalone.sh -c standalone-full-ha.xml --admin-only &
+
+              # Wait for the management interface to be up
+              until curl -sS http://127.0.0.1:9990 > /dev/null; do
+                echo "Waiting for WildFly to start in admin-only mode..."
+                sleep 3
+              done
+
+              echo "WildFly is up, running CLI scripts..."
+
+              # Run the CLI script
+              /opt/jboss/wildfly/bin/jboss-cli.sh --connect --user=admin --password="${ADMIN_PASSWORD}" --file=/cli/wildfly.cli
+
+              # Ensure WildFly is running and then execute the required CLI commands
+              if [ $? -eq 0 ]; then
+                echo "WildFly CLI executed successfully"
+                # If you need to shutdown WildFly
+                /opt/jboss/wildfly/bin/jboss-cli.sh --connect --user=admin --password="${ADMIN_PASSWORD}" --command="shutdown"
+                else
+                echo "CLI execution failed"
+              fi
+
+              echo "Starting WildFly with hostname: ${HOSTNAME} and ip: ${POD_IP}"
+              /opt/jboss/wildfly/bin/standalone.sh -c standalone-full-ha.xml \
+                -Djava.net.preferIPv4Stack=true -b ${POD_IP} -Djgroups.bind_addr=${HOSTNAME} \
+                -Djboss.messaging.cluster.password=makis
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/opt/jboss/wildfly/bin/jboss-cli.sh", "--connect", ":shutdown(timeout=30)"]
+          terminationGracePeriodSeconds: 60
+          env:
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wildfly.admin.secret
+                  key: password
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+              # valueFrom:
+              #   secretKeyRef:
+              #     name: wildfly-cluster-secret
+              #     key: password          
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - containerPort: 7600
+            - containerPort: 8888
+            - containerPort: 9990
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            limits:
+              cpu: 2000m
+              memory: 2048Mi
+            requests:
+              cpu: 1000m
+              memory: 1024Mi
+          volumeMounts:
+            - name: cli-scripts
+              mountPath: /cli
+#            - name: config-volume
+#              mountPath: /opt/jboss/wildfly/standalone/configuration
+            - name: jars-volume
+              mountPath: /opt/jboss/wildfly/standalone/deployments
+              subPath: deployments
+      volumes:
+#        - name: config-volume
+        - name: cli-scripts
+          configMap:
+            name: wildfly-cli
+        - name: scripts-volume
+          configMap:
+            name: init-scripts-configmap
+        - name: scripts-dir
+          emptyDir: {}
+        - name: jars-volume
+          emptyDir: {}
+---
+# Source: wildfly-k8s/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: wildfly-k8s
+  labels:
+    helm.sh/chart: wildfly-k8s-0.1.0
+    app.kubernetes.io/name: wildfly-k8s
+    app.kubernetes.io/instance: wildfly
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wildfly-k8s
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Source: wildfly-k8s/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wildfly-k8s
+  labels:
+    helm.sh/chart: wildfly-k8s-0.1.0
+    app.kubernetes.io/name: wildfly-k8s
+    app.kubernetes.io/instance: wildfly
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  rules:
+    - host: "rancher-wildfly.local"
+      http:
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: wildfly-k8s
+                port:
+                  number: 8080
+---
+# Source: wildfly-k8s/templates/tests/test-connection.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "wildfly-k8s-test-connection"
+  labels:
+    helm.sh/chart: wildfly-k8s-0.1.0
+    app.kubernetes.io/name: wildfly-k8s
+    app.kubernetes.io/instance: wildfly
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: wget
+      image: busybox
+      command: ['wget']
+      args: ['wildfly-k8s:8080']
+  restartPolicy: Never

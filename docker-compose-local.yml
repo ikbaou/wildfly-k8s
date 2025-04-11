@@ -1,0 +1,47 @@
+services:
+  wildfly_node1:
+    container_name: wildfly_node1
+    image: registry.local/wildfly-k8s:1.0-SNAPSHOT
+#    ports:
+#      - 8081:8080
+    expose:
+      - "8080"  # Exposing WildFly's internal port (do not expose to host)
+    environment:
+      - WILDFLY_NODE=node1
+      - WILDFLY_PORT_BINDING=0
+      - WILDFLY_CLUSTER_PW=verysafeclusterpwd
+    networks:
+      wildfly_network:
+        aliases:
+          - wildfly_node1      
+
+  wildfly_node2:
+    container_name: wildfly_node2
+    image: registry.local/wildfly-k8s:1.0-SNAPSHOT
+#    ports:
+#      - 8082:8080
+    expose:
+      - "8080"  # Exposing WildFly's internal port (do not expose to host)
+    environment:
+      - WILDFLY_NODE=node2
+      - WILDFLY_PORT_BINDING=0
+      - WILDFLY_CLUSTER_PW=verysafeclusterpwd
+    networks:
+      wildfly_network:
+        aliases:
+          - wildfly_node2  
+      
+  nginx:
+    container_name: nginx
+    image: nginx:stable-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      wildfly_network:      
+
+
+networks:
+  wildfly_network:
+    driver: bridge  # Use the bridge network driver to enable automatic container discovery

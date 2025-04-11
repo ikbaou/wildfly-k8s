@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wildfly-cli
+data:
+  wildfly.cli: |
+    #carefull not to indent the following line
+{{ include "wildfly.cliScript" . | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: init-scripts-configmap
+data:
+  {{ range $path, $_ :=  .Files.Glob  "scripts/*.sh" }}
+  {{ base $path }}: |
+    #carefull not to indent the following line
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
+
+

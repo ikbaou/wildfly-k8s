@@ -6,9 +6,9 @@
     </head>
     <body>
         <ul style="list-style: none">
-            <li>check health via <a href="http://localhost:8080/health">health endpoint</a>
-            <li>test session via <a href="http://localhost:8080/test">session endpoint</a>
-            <li>invalidate session via <a href="http://localhost:8080/test?invalidate=true">session endpoint</a>
+            <li>check health via <a href="./health">health endpoint</a>
+            <li>test session via <a href="./test">session endpoint</a>
+            <li>invalidate session via <a href="./test?invalidate=true">session endpoint</a>
         </ul>
     </body>
 </html>

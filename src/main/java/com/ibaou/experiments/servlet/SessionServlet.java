@@ -38,10 +38,13 @@ public class SessionServlet extends HttpServlet {
         // Store the updated counter back in the session
         session.setAttribute("counter", counter);
 
+        String nodeId = Optional.ofNullable(System.getenv("HOSTNAME")).orElse("N/A");
+
         // Print a response indicating the counter value
         response.setContentType("text/html");
         try (PrintWriter out = response.getWriter()) {
             out.println("<html><body>");
+            out.println("<h3>NodeID: " + nodeId + "</h3>");
             out.println("<h4>Version: " + VERSION + "</h4>");
             out.println("<h4>Session Counter: " + counter + "</h4>");
             out.println("<p>Session ID: " + session.getId() + "</p>");

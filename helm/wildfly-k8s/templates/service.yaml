@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wildfly-k8s.fullname" . }}
+  labels:
+    {{- include "wildfly-k8s.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: 9990
+      targetPort: 9990
+      protocol: TCP
+      name: admin
+    - port: 7600
+      targetPort: 7600
+      protocol: TCP
+      name: jgroups
+  selector:
+    {{- include "wildfly-k8s.selectorLabels" . | nindent 4 }}

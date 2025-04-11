@@ -2,7 +2,8 @@
 
 ## Build and run standalone
 ### Pre-requisites
-not much, gradlew will handle JDK download and fire up a jetty instance on port 8080
+* not much, gradlew will handle JDK download and fire up a jetty instance on port 8080
+### Run
 ```
 gradlew appRun
 ```
@@ -20,3 +21,37 @@ you should see something like:
 - check health via [health endpoint](http://localhost:8080/health)
 - test session via [session endpoint](http://localhost:8080/test)
 - invalidate session via [session endpoint](http://localhost:8080/test?invalidate=true)
+
+## Docker build and run standalone
+### Pre-requisites
+* docker :)
+### Run
+to build the WAR
+```
+gradlew war
+```
+to build the docker image
+```
+docker build --no-cache -t wildfly-k8s:1.0-SNAPSHOT .
+```
+
+- the build is based on [quay.io/wildfly/wildfly:35.0.1.Final-jdk21](https://quay.io/repository/wildfly/wildfly?tab=tags)
+- it copies the war file from `build/libs` to `/opt/wildfly/standalone/deployments/`
+- sets the very safe :) user: admin password: admin123 and exposes the management console to 9990
+
+to start a docker container
+```
+docker run -p 8080:8080 -p 9990:9990 --name wildfly-k8s wildfly-k8s:1.0-SNAPSHOT
+```
+
+
+# For me to remember ...
+```
+# assuming the root CA cert has been imported in windows trustore
+gradlew war publish -Dcom.sun.net.ssl.checkRevocation=false -Djavax.net.ssl.trustStoreType=Windows-ROOT ^
+-PnexusUsername=xxx -PnexusPassword=yyy
+
+nerdctl build --no-cache -t registry.local/wildfly-k8s:1.0-SNAPSHOT .
+nerdctl --insecure-registry push registry.local/wildfly-k8s:1.0-SNAPSHOT
+nerdctl --insecure-registry compose -f docker-compose-local.yml up -d --force-recreate
+```
